@@ -1,0 +1,85 @@
+#!/bin/sh
+
+# Copy an emoji from a list of emojis stored in a local file(fetched from
+# unicode.org if unavailable) through dmenu(1).
+#
+# This script checks for any new updates in the remote every four months using
+# the last modification time of the remote file.
+
+# Important variables
+PROMPT="Copy emoji to clipboard"
+TIMEOUT="5"
+LOCATION="${XDG_DATA_HOME:-"$HOME/local/share"}/emoji"
+REMOTE_LOCATION="https://unicode.org/Public/emoji/latest/emoji-test.txt"
+
+notify() {
+  command -v notify-send > /dev/null 2>&1 && notify-send "$1" "$2" && return 0
+  printf "%s\n" "$1" > /dev/tty
+  [ -n "$2" ] && printf "%s\n" "$2" > /dev/tty
+  return 0
+}
+
+fetch_emoji() {
+  notify "Attempting to fetch emoji..." "from $REMOTE_LOCATION"
+  curl --silent --location --connect-timeout "$TIMEOUT" --output "$LOCATION" "$REMOTE_LOCATION"
+  exit_code="$?"
+  [ "$exit_code" -ne 0 ] && \
+    notify "Failed to get emoji" "curl(1) exited with $exit_code" && exit 1
+
+  # Modify the output to only a list of emojis and descriptions
+  sed -i '
+    /; fully-qualified/!d
+    /1F3FB/d
+    /1F3FC/d
+    /1F3FD/d
+    /1F3FE/d
+    /1F3FF/d
+    s/.*# //
+    s/E[^ ]* //
+  ' "$LOCATION"
+}
+
+check_emoji_freshness() {
+  date_format='+%s'
+  # Get the modification date of the local copy
+  local_emoji_date="$(date -r "$LOCATION" "$date_format")"
+  now="$(date "$date_format")"
+
+  # If the local copy is not older than four months(in seconds), don't check for
+  # updates
+  [ "$((now - local_emoji_date))" -le 10519200 ] && return 0
+
+  api_resp="$(mktemp)"
+  notify "Checking for updates..." "from $REMOTE_LOCATION"
+  curl --silent --head "$REMOTE_LOCATION" --output "$api_resp"
+  exit_code="$?"
+  [ "$exit_code" -ne 0 ] && \
+    # Failed to check for newer versions of emoji. Accordingly change the
+    # modification date of the local copy so as to not check for updates next
+    # time
+    notify "Failed to check updates" "Exit code $exit_code" && \
+    touch "$LOCATION" && return 0
+
+  # Get the modification date of emoji from remote
+  remote_emoji_date="$(grep -i 'last-modified' "$api_resp" | cut -d' ' -f2- | date "$date_format" -f -)"
+  rm "$api_resp"
+
+  # If date of the remote copy is greater than the local, then the local emoji
+  # file is stale
+  [ "$remote_emoji_date" -gt "$local_emoji_date" ] && return 1
+
+  # Else the local emoji file is fresh; update the modification time of the
+  # local copy accordingly
+  touch "$LOCATION" && return 0
+}
+
+# If local file is available, check for freshness; if either of those fail,
+# fetch emojis from remote
+{ [ -f "$LOCATION" ] && check_emoji_freshness; } || fetch_emoji
+
+choice=$(dmenu -i -p "$PROMPT" "$@" < "$LOCATION" | sed "s/ .*//")
+
+[ -z "$choice" ] && exit 1
+
+printf "%s" "$choice" | xclip -sel c && notify "$choice copied to clipboard."
+exit 0

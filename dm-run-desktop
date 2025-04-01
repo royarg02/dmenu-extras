@@ -1,0 +1,37 @@
+#!/bin/sh
+
+# Run a desktop application(programs having a desktop entry in standard
+# locations) through dmenu(1).
+
+# Important variables
+TAB="$(printf "\t")"
+CACHEDIR="${XDG_CACHE_HOME:-"$HOME/.cache"}"
+CACHE="$CACHEDIR/dmenu_dex"
+PROMPT="Applications"
+
+generate_app_list() {
+  search_path=""
+  IFS=':'
+  
+  for i in ${XDG_DATA_HOME:-"$HOME/.local/share"} ${XDG_DATA_DIRS:-"/usr/local/share:/usr/share"}; do
+    search_path="${search_path}${i}/applications:"
+  done
+
+  if stest -dqr -n "$CACHE" $search_path; then
+    for location in $search_path; do
+      find "$location" -name "*.desktop" ! -exec grep -q '^NoDisplay=true' {} \; \
+        -exec sh -c 'printf "%s\t%s\n" "$(grep -m1 '^Name=' "$0" | cut -d '=' -f2)" "$0"' {} \;
+    done | sort -u -t "$TAB" -k1,1 | tee "$CACHE"
+  fi
+}
+
+[ ! -d "$CACHEDIR" ] && mkdir -p "$CACHEDIR"
+generate_app_list
+
+selected=$(cut -d "$TAB" -f1 "$CACHE" | dmenu -i -p "$PROMPT" "$@")
+
+selected="$(grep "^$selected$TAB" "$CACHE")"
+[ -n "$selected" ] && launch="$(echo "$selected" | cut -d "$TAB" -f2)" && \
+  setsid -f gtk-launch "$(basename "$launch")"
+
+exit 0

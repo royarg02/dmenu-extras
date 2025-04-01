@@ -1,0 +1,32 @@
+#!/bin/sh
+
+# Power options
+# Displays a menu showing options to lock, logoff, suspend, hibernate, poweroff,
+# or reboot system
+
+PROMPT="Power options"
+
+choice="$(cat << END | dmenu -i -F -p "$PROMPT" "$@"
+Lock
+Log off
+Suspend
+Hibernate
+Poweroff
+Reboot system
+Reboot to EFI
+END
+)"
+
+case "$choice" in
+  "Lock")         loginctl lock-session ;;
+  "Log off")      loginctl kill-session "$XDG_SESSION_ID" ;;
+  # Make sure to add the following commands to NOPASSWD at sudoers
+  "Suspend")      sudo loginctl suspend ;;
+  "Hibernate")    sudo loginctl hibernate ;;
+  "Poweroff")     sudo loginctl poweroff ;;
+  "Reboot system")sudo loginctl reboot ;;
+  "Reboot to EFI")sudo loginctl reboot --firmware-setup ;;
+  *)              exit 1 ;;
+esac
+
+exit 0
