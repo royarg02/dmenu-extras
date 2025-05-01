@@ -21,7 +21,7 @@ generate_app_list() {
     for location in $search_path; do
       find "$location" -name "*.desktop" ! -exec grep -q '^NoDisplay=true' {} \; \
         -exec sh -c 'printf "%s\t%s\n" "$(grep -m1 '^Name=' "$0" | cut -d '=' -f2)" "$0"' {} \;
-    done | sort -u -t "$TAB" -k1,1 | tee "$CACHE"
+    done | sort -u -t "$TAB" -k1,1 > "$CACHE"
   fi
 }
 
