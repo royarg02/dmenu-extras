@@ -1,0 +1,129 @@
+#!/bin/sh
+
+# Takes a screenshot of the entire screen, or a window, or any rectangular
+# region.
+
+PROMPT="Take a screenshot"
+TIMEOUT_PROMPT="capture delay(in seconds)"
+SCREENSHOT_DIR="$HOME/Pictures/Screenshots"
+
+die() {
+  [ "$1" ] && notify "$1" && exit 1
+}
+
+notify() {
+  [ "$2" ] && TIMEOUT_ARG="-t $2"
+  command -v notify-send > /dev/null 2>&1 && \
+    notify-send $TIMEOUT_ARG "dm-scshot" "$1" && return 0
+  printf "%s\n" "$1" > /dev/tty
+  return 0
+}
+
+timeout() {
+  # Make the notification go away 1ms before screenshot is taken to avoid
+  # including it in the shot
+  notify "Taking screenshot after $1 seconds..." "$(($1 * 1000 - 1))"
+  sleep "$1"
+}
+
+# Save and copy screenshot to clipboard
+shoot_screen() {
+  filename="$SCREENSHOT_DIR/Screenshot_$(date '+%Y%m%d-%H%M%S').png"
+
+  cat /dev/stdin > "$filename" && notify "Screenshot saved at $filename."
+  xclip -sel c -t image/png < "$filename"
+}
+
+# Take screenshot of a window.
+window_shot() {
+  command -v xprop > /dev/null 2>&1 || \
+    die "xorg-xprop must be installed for window screenshot."
+
+  # Get the pid of the selected window from xprop info
+  selected_pid="$(xprop _NET_WM_PID | cut -d'=' -f2)"
+
+  # Get all active window ids in the current session
+  clients="$(xprop -root _NET_CLIENT_LIST | grep -Eo '0x[0-9a-f]+')"
+
+  # The client to take the screenshot of
+  CLIENT=""
+
+  # Traverse through the active clients...
+  for client in $clients; do
+    # ...and get the pid of the current client of the loop...
+    window_pid="$(xprop -id "$client" _NET_WM_PID | cut -d'=' -f2)"
+    # ...to match with the pid of the selected window
+    if [ "$selected_pid" = "$window_pid" ]; then
+      # Set the client to take the screenshot of
+      CLIENT="$client"
+      break
+    fi
+  done
+
+  # Wait after TIMEOUT seconds for screenshot, if provided
+  #
+  # The client may not be available after the timeout, so check for it again
+  if [ "$TIMEOUT" ]; then
+    timeout "$TIMEOUT"
+    xprop -root _NET_CLIENT_LIST | grep -Eo '0x[0-9a-f]+' | \
+      grep -q "$CLIENT" || die "Selected window was not found."
+  fi
+  import -frame -window "$CLIENT" png:- | shoot_screen
+}
+
+# Take screenshot of the entire screen.
+full_shot() {
+  # Wait after TIMEOUT seconds for screenshot, if provided
+  [ "$TIMEOUT" ] && timeout "$TIMEOUT"
+
+  import -window root png:- | shoot_screen
+}
+
+# Take screenshot of a selected rectangular region.
+rect_shot() {
+  command -v slop > /dev/null 2>&1 || \
+    die "slop must be installed for region screenshot."
+
+  # Get the dimensions of the region using slop(1).
+  dimension="$(slop --nokeyboard -f "%wx%h+%x+%y")" || \
+    die "Selection was cancelled by right click."
+
+  # Wait after TIMEOUT seconds for region screenshot, if provided
+  [ "$TIMEOUT" ] && timeout "$TIMEOUT"
+
+  import -window root -crop "$dimension" png:- | shoot_screen
+}
+
+[ -d "$SCREENSHOT_DIR" ] || mkdir -p "$SCREENSHOT_DIR"
+
+MODE="$(cat << END | dmenu -i -F -p "$PROMPT" "$@"
+Fullscreen
+Window
+Region
+END
+)"
+
+case "$MODE" in
+  "Fullscreen")  FULL="Y";;
+  "Window")      WINDOW="Y" ;;
+  "Region")      REGION="Y" ;;
+  *)             exit 1 ;;
+esac
+
+TIMEOUT="$(dmenu -p "$MODE $TIMEOUT_PROMPT" -it "0" "$@" < /dev/null)"
+
+# Quit if TIMEOUT is invalid or empty
+case "$TIMEOUT" in
+  "") exit 1 ;;
+  *[0-9]*)
+      [ "$TIMEOUT" -lt 0 ] && die "Invalid timeout"
+      [ "$TIMEOUT" -eq 0 ] && unset TIMEOUT
+      ;;
+  *) die "Invalid timeout" ;;
+esac
+
+[ "$WINDOW" ] && window_shot
+[ "$REGION" ] && rect_shot
+[ "$FULL" ] && full_shot
+
+exit 0
