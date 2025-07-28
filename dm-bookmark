@@ -1,0 +1,97 @@
+#!/bin/sh
+
+BM_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/dm-bookmarks.json"
+MODIFY_NAME="dm-modify-bookmark"
+DELETE_PROMPT="Select bookmark to delete"
+EDIT_PROMPT="Select bookmark to edit"
+OPEN_PROMPT="Open bookmark"
+MODIFY_PROMPT="Modify bookmarks"
+
+die() {
+  [ "$1" ] && notify "$1" && exit 1
+}
+
+notify() {
+  command -v notify-send > /dev/null 2>&1 && \
+  notify-send "dm-bookmarks" "$1" && return 0
+  printf "%s\n" "$1" > /dev/tty
+  return 0
+}
+
+gen_bm_list() {
+  bm_list="$(jq -r '.[] | "\(.url // "") • \(.name // "") • \(.tags | join(","))"' "$BM_FILE")"
+  [ -z "$bm_list" ] && die "No bookmarks available, or \"$BM_FILE\" has an invalid format."
+  echo "$bm_list"
+}
+
+[ ! -r "$BM_FILE" ] && die "Bookmarks file \"$BM_FILE\" doesn't exist."
+
+if echo "$0" | grep -q "$MODIFY_NAME"; then
+MODIFY_OPT="$(cat << END | dmenu -i -F -p "$MODIFY_PROMPT" "$@"
+New bookmark
+Edit bookmark
+Delete bookmark
+END
+)"
+
+  if [ "$MODIFY_OPT" = "New bookmark" ]; then
+    { url="$(dmenu -p "Enter URL(Empty to abort)" "$@" < /dev/null)" && [ -n "$url" ] && \
+      title="$(dmenu -p "Enter title(Empty to abort)" "$@" < /dev/null)" && [ -n "$title" ] && \
+      tags="$(dmenu -p "Enter space separated tags(optional)" "$@" < /dev/null)"; } || \
+      die "Bookmark creation aborted."
+
+    bm_tmp="$(mktemp)"
+    jq -r --arg name "$title" --arg url "$url" --arg tags "$tags" \
+      '. += [{"name" : $name, "url" : $url, "tags": $tags | split(" ")}]' \
+      "$BM_FILE" > "$bm_tmp"
+    mv "$bm_tmp" "$BM_FILE"
+    notify "Bookmark \"$url\" created."
+  elif [ "$MODIFY_OPT" = "Edit bookmark" ]; then
+    bm_tmp="$(mktemp)"
+    gen_bm_list > "$bm_tmp"
+    selected="$(dmenu -i -F -p "$EDIT_PROMPT" "$@" < "$bm_tmp" | cut -d' ' -f1)"
+    [ -z "$selected" ] && exit 1
+
+    old_url="$(jq -er --arg url "$selected" '.[] | select(.url == $url).url' "$BM_FILE")" || \
+      die "Bookmark \"$selected\" not found."
+    old_title="$(jq -r --arg url "$selected" '.[] | select(.url == $url).name' "$BM_FILE")"
+    old_tags="$(jq -r --arg url "$selected" '.[] | select(.url == $url).tags | join(" ")' "$BM_FILE")"
+
+    { url="$(dmenu -p "Edit URL(Empty to abort)" -it "$old_url" "$@" < /dev/null)" && [ -n "$url" ] && \
+      title="$(dmenu -p "Edit title(Empty to abort)" -it "$old_title" "$@" < /dev/null)" && [ -n "$title" ] && \
+      tags="$(dmenu -p "Edit tags(space separated)" -it "$old_tags" "$@" < /dev/null)"; } || \
+      die "Bookmark edit aborted."
+
+    [ "$old_url" = "$url" ] && [ "$old_title" = "$title" ] && \
+      [ "$old_tags" = "$tags" ] && die "No modifications to do."
+
+    jq -r --arg url "$url" --arg name "$title" --arg tags "$tags" \
+      '(.[] | select(.url == $url)) = {"name": $name, "url": $url, "tags": $tags | split(" ")}' \
+      "$BM_FILE" > "$bm_tmp"
+    mv "$bm_tmp" "$BM_FILE"
+    notify "Bookmark \"$url\" edit successful."
+  elif [ "$MODIFY_OPT" = "Delete bookmark" ]; then
+    bm_tmp="$(mktemp)"
+    gen_bm_list > "$bm_tmp"
+    selected="$(dmenu -i -F -p "$DELETE_PROMPT" "$@" < "$bm_tmp" | cut -d' ' -f1)"
+    [ -z "$selected" ] && exit 1
+
+    url="$(jq -er --arg url "$selected" '.[] | select(.url == $url).url' "$BM_FILE")" || \
+      die "Bookmark \"$selected\" not found."
+    jq -r --arg url "$url" 'del(.[] | select(.url == $url))' "$BM_FILE" > "$bm_tmp"
+    mv "$bm_tmp" "$BM_FILE"
+    notify "Bookmark \"$url\" deleted."
+  else
+    exit 1
+  fi
+else
+  bm_tmp="$(mktemp)"
+  gen_bm_list > "$bm_tmp"
+  selected="$(dmenu -i -F -p "$OPEN_PROMPT" "$@" < "$bm_tmp" | cut -d' ' -f1)"
+  [ -z "$selected" ] && exit 1
+  url="$(jq -er --arg url "$selected" '.[] | select(.url == $url).url' "$BM_FILE")" || \
+    die "Bookmark \"$selected\" not found."
+  xdg-open "$url"
+fi
+
+exit 0
