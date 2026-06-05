@@ -19,8 +19,9 @@ generate_app_list() {
 
   if stest -dqr -n "$CACHE" $search_path; then
     for location in $search_path; do
-      find "$location" -name "*.desktop" ! -exec grep -q '^NoDisplay=true' {} \; \
-        -exec sh -c 'printf "%s\t%s\n" "$(grep -m1 '^Name=' "$0" | cut -d '=' -f2)" "$0"' {} \;
+      find "$location" -name "*.desktop" \
+        ! -exec sh -c '[ "$(sed -n "/^\[Desktop Entry\]/,/^\[.*\]/s/^NoDisplay=//p" "$0")" = true ]' {} \; \
+        -exec sh -c 'printf "%s\t%s\n" "$(sed -n "/^\[Desktop Entry\]/,/^\[.*\]/s/^Name=//p" "$0")" "$0"' {} \;
     done | sort -u -t "$TAB" -k1,1 > "$CACHE"
   fi
 }
@@ -32,6 +33,6 @@ selected=$(cut -d "$TAB" -f1 "$CACHE" | dmenu -i -p "$PROMPT" "$@")
 
 selected="$(grep "^$selected$TAB" "$CACHE")"
 [ -n "$selected" ] && launch="$(echo "$selected" | cut -d "$TAB" -f2)" && \
-  setsid -f gtk-launch "$(basename "$launch")"
+  setsid -f gio launch "$launch"
 
 exit 0
