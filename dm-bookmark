@@ -4,7 +4,7 @@ BM_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/dm-bookmarks.json"
 MODIFY_NAME="dm-modify-bookmark"
 DELETE_PROMPT="Select bookmark to delete"
 EDIT_PROMPT="Select bookmark to edit"
-OPEN_PROMPT="Open bookmark"
+SELECT_PROMPT="Select bookmark to copy"
 MODIFY_PROMPT="Modify bookmarks"
 
 die() {
@@ -87,11 +87,11 @@ END
 else
   bm_tmp="$(mktemp)"
   gen_bm_list > "$bm_tmp"
-  selected="$(dmenu -i -F -p "$OPEN_PROMPT" "$@" < "$bm_tmp" | cut -d' ' -f1)"
+  selected="$(dmenu -i -F -p "$SELECT_PROMPT" "$@" < "$bm_tmp" | cut -d' ' -f1)"
   [ -z "$selected" ] && exit 1
   url="$(jq -er --arg url "$selected" '.[] | select(.url == $url).url' "$BM_FILE")" || \
     die "Bookmark \"$selected\" not found."
-  xdg-open "$url"
+  printf "%s" "$url" | xclip -sel c && notify "Bookmark copied to clipboard."
 fi
 
 exit 0
